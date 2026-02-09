@@ -2,12 +2,11 @@
 
 [Русская версия](docs/README-RU.md)
 
-<p align="center">
-	<img alt="Bash" src="https://img.shields.io/badge/Bash-5.x-4EAA25?logo=gnu-bash&logoColor=white">
-	<img alt="Debian" src="https://img.shields.io/badge/Debian-12%2F13-A81D33?logo=debian&logoColor=white">
-	<img alt="GNOME" src="https://img.shields.io/badge/GNOME-48-4A86CF?logo=gnome&logoColor=white">
-	<img alt="Xorg" src="https://img.shields.io/badge/Xorg-X11-FF6600?logo=xorg&logoColor=white">
-</p>
+![Bash](https://img.shields.io/badge/Bash-5.0+-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white)
+![Debian](https://img.shields.io/badge/Debian-12%2F13-A81D33?style=for-the-badge&logo=debian&logoColor=white)
+![GNOME](https://img.shields.io/badge/GNOME-48-4A86CF?style=for-the-badge&logo=gnome&logoColor=white)
+![Xorg](https://img.shields.io/badge/Xorg-X11-FF6600?style=for-the-badge&logo=xorg&logoColor=white)
+![systemd](https://img.shields.io/badge/systemd-service-DA2525?style=for-the-badge&logo=linux&logoColor=white)
 
 This project builds and installs patched `mutter` and `gnome-control-center` on Debian to enable X11 fractional scaling in GNOME 48. It also provides an optional user service to keep Qt apps in sync with GNOME scaling.
 
