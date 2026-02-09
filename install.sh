@@ -122,6 +122,8 @@ if prompt_confirm "Install qt-scale-watch? This keeps Qt apps in sync with GNOME
   run_cmd "install qt-scale-update.path" install -m 0644 "$UNIT_PATH_SRC" "$SYSTEMD_USER_DIR/qt-scale-update.path"
   run_cmd "install qt-scale-update.service" install -m 0644 "$UNIT_SERVICE_SRC" "$SYSTEMD_USER_DIR/qt-scale-update.service"
 
+  warn "Some Qt apps require re-login or reboot after changing scale to work correctly."
+
   if command -v systemctl >/dev/null 2>&1; then
     run_cmd "systemctl --user daemon-reload" systemctl --user daemon-reload
     run_cmd "enable qt-scale-update.path" systemctl --user enable --now qt-scale-update.path

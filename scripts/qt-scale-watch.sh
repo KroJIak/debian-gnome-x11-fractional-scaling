@@ -23,8 +23,8 @@ for s in "${scales[@]}"; do
 done
 
 mkdir -p "$ENV_DIR"
-content="QT_AUTO_SCREEN_SCALE_FACTOR=0
-QT_SCALE_FACTOR=$max_scale"
+qt_font_dpi=$(awk -v s="$max_scale" 'BEGIN{printf "%d", (s * 96) + 0.5}')
+content="QT_FONT_DPI=$qt_font_dpi"
 
 existing=""
 if [[ -f "$ENV_FILE" ]]; then
@@ -34,6 +34,6 @@ fi
 if [[ "$existing" != "$content" ]]; then
   printf '%s\n' "$content" > "$ENV_FILE"
   if [[ -n "$NOTIFY_BIN" ]]; then
-    "$NOTIFY_BIN" "Qt scale updated" "QT_SCALE_FACTOR=$max_scale. Restart Qt apps or log out/in." || true
+    "$NOTIFY_BIN" "Qt scale updated" "QT_FONT_DPI=$qt_font_dpi. Restart Qt apps or log out/in." || true
   fi
 fi

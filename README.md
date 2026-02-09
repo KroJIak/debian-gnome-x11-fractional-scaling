@@ -59,7 +59,7 @@ What the script does:
 
 ## Qt scaling watcher (optional)
 
-When enabled, `qt-scale-watch` updates `QT_SCALE_FACTOR` to match the highest GNOME scale from `~/.config/monitors.xml`. This helps Qt apps avoid blurry or wrong-sized UI after you change scale in GNOME Settings.
+When enabled, `qt-scale-watch` updates `QT_FONT_DPI` based on the highest GNOME scale from `~/.config/monitors.xml`. This helps Qt apps keep readable UI sizes after you change scale in GNOME Settings without forcing a global Qt scale.
 
 The systemd user units are:
 
@@ -71,6 +71,8 @@ Check status:
 ```bash
 systemctl --user status qt-scale-update.path
 ```
+
+Note: Some Qt apps may still require re-login or reboot after changing scale to work correctly on X11.
 
 ## Uninstall
 
