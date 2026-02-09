@@ -1,0 +1,113 @@
+# Исправление дробного масштабирования GNOME X11 для Debian
+
+[English version](../README.md)
+
+<p align="center">
+  <img alt="Bash" src="https://img.shields.io/badge/Bash-5.x-4EAA25?logo=gnu-bash&logoColor=white">
+  <img alt="Debian" src="https://img.shields.io/badge/Debian-12%2F13-A81D33?logo=debian&logoColor=white">
+  <img alt="GNOME" src="https://img.shields.io/badge/GNOME-48-4A86CF?logo=gnome&logoColor=white">
+  <img alt="Xorg" src="https://img.shields.io/badge/Xorg-X11-FF6600?logo=xorg&logoColor=white">
+</p>
+
+Проект собирает и устанавливает пропатченные `mutter` и `gnome-control-center` в Debian, чтобы включить дробное масштабирование X11 в GNOME 48. Также есть опциональный пользовательский сервис для синхронизации масштабирования Qt-приложений с GNOME.
+
+## Что внутри
+
+- `scripts/fix-scale.sh` - сборка и установка пропатченных пакетов.
+- `scripts/qt-scale-watch.sh` - обновляет `QT_SCALE_FACTOR` по данным из `~/.config/monitors.xml`.
+- `systemd/user/qt-scale-update.path` - отслеживает изменения масштаба мониторов.
+- `systemd/user/qt-scale-update.service` - запускает скрипт обновления масштаба Qt.
+- `install.sh` - установка фикса и (по желанию) Qt-наблюдателя.
+
+## Требования
+
+- Debian 12 или 13
+- GNOME 48
+- Сессия Xorg
+- Доступ к `sudo` для установки пакетов
+
+## Установка
+
+```bash
+./install.sh
+```
+
+Опции:
+
+- `--debug` - полный вывод команд (без лог-файлов).
+- `-y`, `--yes` - автоматически подтверждать запросы.
+- `--only-qt` - установить только Qt-наблюдателя и systemd units.
+
+Установщик копирует `fix-scale` в `~/.local/bin` и, при выборе, включает пользовательский systemd path unit для обновлений Qt.
+
+После установки обязательно перелогиньтесь или перезагрузитесь.
+
+## Запуск фикса
+
+```bash
+./scripts/fix-scale.sh
+```
+
+Что делает скрипт:
+
+- Устанавливает инструменты сборки и зависимости.
+- Скачивает исходники Debian через `apt source`.
+- Применяет патчи для дробного масштабирования X11.
+- Собирает и устанавливает `.deb` пакеты.
+- Включает экспериментальную опцию GNOME `x11-randr-fractional-scaling`.
+- По желанию ставит `mutter` и `gnome-control-center` на hold.
+- Удаляет временную рабочую директорию по завершении.
+
+## Qt-наблюдатель масштаба (опционально)
+
+При включении `qt-scale-watch` обновляет `QT_SCALE_FACTOR` до максимального масштаба из `~/.config/monitors.xml`. Это помогает Qt-приложениям избежать размытого или неправильного размера интерфейса после изменения масштаба в настройках GNOME.
+
+Пользовательские systemd units:
+
+- `qt-scale-update.path`
+- `qt-scale-update.service`
+
+Проверка статуса:
+
+```bash
+systemctl --user status qt-scale-update.path
+```
+
+## Удаление
+
+Остановить и отключить Qt-наблюдатель:
+
+```bash
+systemctl --user disable --now qt-scale-update.path
+```
+
+Удалить установленные файлы:
+
+```bash
+rm -f ~/.local/bin/fix-scale
+rm -f ~/.local/bin/qt-scale-watch
+rm -f ~/.config/systemd/user/qt-scale-update.path
+rm -f ~/.config/systemd/user/qt-scale-update.service
+systemctl --user daemon-reload
+```
+
+Если использовали hold, снимите его:
+
+```bash
+sudo apt-mark unhold mutter gnome-control-center
+```
+
+## Логи
+
+По умолчанию логи установщика хранятся в:
+
+```
+~/.cache/debian-fix-install/logs
+```
+
+Логи сборки лежат в рабочей директории `WORKDIR` (по умолчанию: `~/debian-x11-scale`).
+
+## Примечания
+
+- Это локальная сборка. Будущие обновления Debian могут перезаписать пропатченные пакеты, если их не держать на hold.
+- При конфликтах патчей обновите репозитории патчей или примените их вручную.

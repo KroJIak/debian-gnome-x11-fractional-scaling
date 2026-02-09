@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch GNOME monitors.xml for scale changes
+
+[Path]
+PathChanged=%h/.config/monitors.xml
+Unit=qt-scale-update.service
+
+[Install]
+WantedBy=default.target

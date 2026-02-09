@@ -1,0 +1,6 @@
+[Unit]
+Description=Update Qt scale factor from GNOME monitors.xml
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/qt-scale-watch
