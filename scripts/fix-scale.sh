@@ -22,6 +22,13 @@ for arg in "$@"; do
   esac
 done
 
+# Set APT_YES_FLAG based on AUTO_YES
+if [[ "$AUTO_YES" -eq 1 ]]; then
+  APT_YES_FLAG="-y"
+else
+  APT_YES_FLAG=""
+fi
+
 if command -v tput >/dev/null 2>&1; then
   COLOR_OK=$(tput setaf 2)
   COLOR_WARN=$(tput setaf 3)
@@ -164,10 +171,10 @@ if ! run_cmd "apt update" sudo apt update; then
   warn "apt update failed; continuing with existing package lists"
   warn "Consider disabling unsigned repos (e.g. repo.fig.io)"
 fi
-run_cmd "apt install base tools" sudo apt install -y devscripts build-essential quilt git
+run_cmd "apt install base tools" sudo apt install $APT_YES_FLAG devscripts build-essential quilt git
 
 info "Installing build dependencies for mutter"
-run_cmd "apt build-dep mutter" sudo apt build-dep -y mutter
+run_cmd "apt build-dep mutter" sudo apt build-dep $APT_YES_FLAG mutter
 
 mkdir -p "${WORKDIR}"
 cd "${WORKDIR}"
@@ -224,7 +231,7 @@ info "Enable X11 fractional scaling feature"
 run_cmd "gsettings set fractional" gsettings set org.gnome.mutter experimental-features "['x11-randr-fractional-scaling']" || true
 
 info "Installing build dependencies for gnome-control-center"
-run_cmd "apt build-dep g-c-c" sudo apt build-dep -y gnome-control-center
+run_cmd "apt build-dep g-c-c" sudo apt build-dep $APT_YES_FLAG gnome-control-center
 
 if [[ ! -d gnome-control-center-x11-scaling ]]; then
   run_cmd "clone g-c-c-x11-scaling" git clone "${GCC_PATCH_REPO}"
