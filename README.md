@@ -13,10 +13,11 @@ This project builds and installs patched `mutter` and `gnome-control-center` on 
 ## What is included
 
 - `scripts/fix-scale.sh` - builds and installs patched packages.
+- `scripts/recovery-restore.sh` - rollback tool to restore original Debian packages.
 - `scripts/qt-scale-watch.sh` - updates `QT_SCALE_FACTOR` based on `~/.config/monitors.xml`.
 - `systemd/user/qt-scale-update.path` - watches for monitor scale changes.
 - `systemd/user/qt-scale-update.service` - runs the Qt scale update script.
-- `install.sh` - installs the fix and optionally the Qt watcher.
+- `install.sh` - installs the fix and optionally the Qt watcher and recovery tool.
 
 ## Requirements
 
@@ -37,7 +38,16 @@ Options:
 - `-y`, `--yes` - auto-accept prompts.
 - `--only-qt` - install only the Qt scale watcher and systemd units.
 
-The installer copies `fix-scale` to `~/.local/bin` and, if selected, enables the user systemd path unit for Qt updates.
+The installer copies `fix-scale` and `recovery-restore` to `~/.local/bin` and, if selected, enables the user systemd path unit for Qt updates.
+
+### Safety Features
+
+✓ **Automatic backup** of original `mutter` and `gnome-control-center` packages before patching  
+✓ **Patch validation** - fails immediately on conflicts (`.rej` files)  
+✓ **Feature verification** - confirms `x11-randr-fractional-scaling` is enabled  
+✓ **Safe updates** - preserves other experimental features  
+✓ **Package holds** (optional) - prevents apt from overwriting patches  
+✓ **Recovery tool** - fast rollback to original Debian packages  
 
 After installation you must re-login or reboot.
 
@@ -74,7 +84,29 @@ systemctl --user status qt-scale-update.path
 
 Note: Some Qt apps may still require re-login or reboot after changing scale to work correctly on X11.
 
-## Uninstall
+## Uninstall and Recovery
+
+### Quick rollback (if something breaks)
+
+List available backups:
+
+```bash
+~/.local/bin/recovery-restore --list
+```
+
+Restore from latest backup:
+
+```bash
+~/.local/bin/recovery-restore -y
+```
+
+Restore from specific backup:
+
+```bash
+~/.local/bin/recovery-restore --backup 20250212-164200 -y
+```
+
+### Full cleanup
 
 Stop and disable the Qt watcher:
 
@@ -86,29 +118,46 @@ Remove installed files:
 
 ```bash
 rm -f ~/.local/bin/fix-scale
+rm -f ~/.local/bin/recovery-restore
 rm -f ~/.local/bin/qt-scale-watch
 rm -f ~/.config/systemd/user/qt-scale-update.path
 rm -f ~/.config/systemd/user/qt-scale-update.service
 systemctl --user daemon-reload
 ```
 
-If you used package holds, remove them:
+Remove package holds (if used):
 
 ```bash
 sudo apt-mark unhold mutter gnome-control-center
 ```
 
-## Logs
+## Logs and Backup Storage
 
-By default, installer logs are stored in:
+Installer logs:
 
 ```
 ~/.cache/debian-fix-install/logs
 ```
 
-Build logs are stored in the work directory defined by `WORKDIR` (default: `~/debian-x11-scale`).
+Original package backups:
 
-## Notes
+```
+~/.local/share/debian-fix-backup/
+```
 
-- This is a local build. Future Debian updates for `mutter` and `gnome-control-center` may overwrite the patched packages if not held.
-- If you see patch conflicts, update the patch repositories or apply them manually.
+Build logs:
+
+```
+~/debian-x11-scale/logs (WORKDIR/logs)
+```
+
+## Important Notes
+
+- **Backups are essential**: Before each patch, original packages are backed up automatically.
+- **Package holds recommended**: To prevent apt updates from overwriting your patches, the installer will ask to enable holds.
+- **If apt overwrites patches**: Use `recovery-restore` to quickly rollback and re-run `fix-scale.sh`.
+- **Version requirements**: Script enforces Debian 12/13 and GNOME 48 checks; can override with prompts.
+- **Session requirement**: Must be running Xorg (X11), not Wayland.
+- **Build tool requirement**: Needs `quilt` for patch application (auto-installed).
+- **Partial build failures**: If one package fails, you can fix and rebuild just that package separately.
+- **Qt apps note**: Some Qt applications may require re-login or reboot to fully sync with new scaling.

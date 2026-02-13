@@ -93,26 +93,33 @@ run_cmd() {
 
 FIX_SRC="$SCRIPT_DIR/scripts/fix-scale.sh"
 QT_SRC="$SCRIPT_DIR/scripts/qt-scale-watch.sh"
+RECOVERY_SRC="$SCRIPT_DIR/scripts/recovery-restore.sh"
 UNIT_PATH_SRC="$SCRIPT_DIR/systemd/user/qt-scale-update.path"
 UNIT_SERVICE_SRC="$SCRIPT_DIR/systemd/user/qt-scale-update.service"
 
 [[ -f "$FIX_SRC" ]] || fail "Missing: $FIX_SRC"
 [[ -f "$QT_SRC" ]] || fail "Missing: $QT_SRC"
+[[ -f "$RECOVERY_SRC" ]] || fail "Missing: $RECOVERY_SRC"
 [[ -f "$UNIT_PATH_SRC" ]] || fail "Missing: $UNIT_PATH_SRC"
 [[ -f "$UNIT_SERVICE_SRC" ]] || fail "Missing: $UNIT_SERVICE_SRC"
 
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 SYSTEMD_USER_DIR="${SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
 
-info "Installing fix script"
+info "Installing fix script and recovery tool"
 if [[ "$ONLY_QT" -eq 0 ]]; then
   run_cmd "mkdir bin dir" mkdir -p "$BIN_DIR"
   run_cmd "install fix-scale" install -m 0755 "$FIX_SRC" "$BIN_DIR/fix-scale"
   ok "Installed: $BIN_DIR/fix-scale"
 
+  run_cmd "install recovery-restore" install -m 0755 "$RECOVERY_SRC" "$BIN_DIR/recovery-restore"
+  ok "Installed recovery tool: $BIN_DIR/recovery-restore"
+
   if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
-    warn "$BIN_DIR is not in PATH; add it to use 'fix-scale' easily"
+    warn "$BIN_DIR is not in PATH; add it to use 'fix-scale' and 'recovery-restore' easily"
   fi
+  
+  info "To rollback to original packages later, run: recovery-restore --list"
 fi
 
 if prompt_confirm "Install qt-scale-watch? This keeps Qt apps in sync with GNOME scaling changes and avoids blurry or wrong-sized Qt UI after you change scale."; then

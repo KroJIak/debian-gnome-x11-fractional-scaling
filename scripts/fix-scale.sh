@@ -72,8 +72,77 @@ prompt_confirm() {
   [[ "$reply" == "y" || "$reply" == "Y" ]]
 }
 
+backup_original_packages() {
+  local backup_ts
+  backup_ts=$(date +%Y%m%d-%H%M%S)
+  local backup_path="$BACKUP_DIR/$backup_ts"
+  
+  mkdir -p "$backup_path"
+  
+  info "Backing up original mutter and gnome-control-center packages"
+  local mutter_pkg gnome_cc_pkg
+  mutter_pkg=$(dpkg -l | grep '^ii.*mutter ' | awk '{print $2}')
+  gnome_cc_pkg=$(dpkg -l | grep '^ii.*gnome-control-center ' | awk '{print $2}')
+  
+  if [[ -n "$mutter_pkg" ]]; then
+    run_cmd "backup mutter" apt-cache show "$mutter_pkg" '>' "$backup_path/mutter.info"
+  fi
+  if [[ -n "$gnome_cc_pkg" ]]; then
+    run_cmd "backup gnome-cc" apt-cache show "$gnome_cc_pkg" '>' "$backup_path/gnome-control-center.info"
+  fi
+  
+  echo "$backup_ts" > "$BACKUP_DIR/latest"
+  ok "Backup created at $backup_path"
+}
+
+validate_patch_applied() {
+  local src_dir="$1"
+  local rej_files
+  rej_files=$(find "$src_dir" -name '*.rej' 2>/dev/null | wc -l)
+  
+  if [[ $rej_files -gt 0 ]]; then
+    fail "Patch conflicts detected ($rej_files .rej files found)"
+  fi
+}
+
+validate_feature_enabled() {
+  local features
+  features=$(gsettings get org.gnome.mutter experimental-features 2>/dev/null || echo "['']")
+  
+  if ! echo "$features" | grep -q 'x11-randr-fractional-scaling'; then
+    warn "Feature x11-randr-fractional-scaling not found in experimental-features: $features"
+    return 1
+  fi
+  ok "Feature x11-randr-fractional-scaling enabled"
+  return 0
+}
+
+add_experimental_feature() {
+  local feature_to_add="$1"
+  local current_features
+  local new_features
+  
+  current_features=$(gsettings get org.gnome.mutter experimental-features 2>/dev/null || echo "[]")
+  
+  # Check if feature already exists
+  if echo "$current_features" | grep -q "$feature_to_add"; then
+    return 0
+  fi
+  
+  # Extract array contents and add new feature
+  # Example: ['scale-monitor-framebuffer'] -> ['scale-monitor-framebuffer', 'x11-randr-fractional-scaling']
+  if [[ "$current_features" == "[]" ]]; then
+    new_features="['$feature_to_add']"
+  else
+    new_features="${current_features%]}", '$feature_to_add']"
+  fi
+  
+  gsettings set org.gnome.mutter experimental-features "$new_features" 2>&1 | grep -v "Failed to load module" | grep -v "libgnutls" || true
+}
+
 WORKDIR="${WORKDIR:-$HOME/debian-x11-scale}"
 LOG_DIR="${LOG_DIR:-$WORKDIR/logs}"
+BACKUP_DIR="${BACKUP_DIR:-$HOME/.local/share/debian-fix-backup}"
 MUTTER_PATCH_REPO="${MUTTER_PATCH_REPO:-https://github.com/puxplaying/mutter-x11-scaling.git}"
 GCC_PATCH_REPO="${GCC_PATCH_REPO:-https://github.com/puxplaying/gnome-control-center-x11-scaling.git}"
 
@@ -166,12 +235,22 @@ if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]]; then
   prompt_confirm "Continue anyway?" || exit 1
 fi
 
+if ! command -v quilt >/dev/null 2>&1; then
+  fail "quilt is required but not installed; install with: sudo apt install quilt"
+fi
+
 info "Installing build tools"
 if ! run_cmd "apt update" sudo apt update; then
   warn "apt update failed; continuing with existing package lists"
   warn "Consider disabling unsigned repos (e.g. repo.fig.io)"
 fi
 run_cmd "apt install base tools" sudo apt install $APT_YES_FLAG devscripts build-essential quilt git
+
+if prompt_confirm "Create backup of original packages before patching?"; then
+  backup_original_packages
+else
+  warn "Proceeding without backup; consider this unsafe"
+fi
 
 info "Installing build dependencies for mutter"
 run_cmd "apt build-dep mutter" sudo apt build-dep $APT_YES_FLAG mutter
@@ -219,6 +298,8 @@ if ! quilt push -a; then
   fi
 fi
 
+validate_patch_applied "${WORKDIR}/${MUTTER_DIR}"
+
 info "Building mutter package"
 run_cmd "build mutter" env DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-nocheck} dpkg-buildpackage -b -us -uc
 
@@ -228,7 +309,11 @@ run_cmd "dpkg install mutter" sudo dpkg -i ./*~x11scale*.deb
 run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
 
 info "Enable X11 fractional scaling feature"
-run_cmd "gsettings set fractional" gsettings set org.gnome.mutter experimental-features "['x11-randr-fractional-scaling']" || true
+add_experimental_feature "x11-randr-fractional-scaling"
+
+if ! validate_feature_enabled; then
+  warn "Feature may not have been enabled correctly"
+fi
 
 info "Installing build dependencies for gnome-control-center"
 run_cmd "apt build-dep g-c-c" sudo apt build-dep $APT_YES_FLAG gnome-control-center
@@ -291,4 +376,7 @@ if [[ -n "${WORKDIR}" && "${WORKDIR}" != "/" ]]; then
   ok "Removed workdir: ${WORKDIR}"
 fi
 
-ok "done"
+ok "Installation complete"
+info "Backup location: $BACKUP_DIR"
+info "To rollback: sudo apt install --allow-downgrades $(ls $BACKUP_DIR/latest -r | head -1 | xargs -I {} cat $BACKUP_DIR/{}/mutter.info | grep ^Package | awk '{print $2}')"
+warn "Please re-login or reboot for changes to take effect"
