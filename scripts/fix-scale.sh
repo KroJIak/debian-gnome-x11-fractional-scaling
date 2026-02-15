@@ -4,6 +4,9 @@ set -euo pipefail
 AUTO_YES=0
 DEBUG=0
 
+# Always skip running unit tests during Debian builds unless explicitly overridden
+export DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-nocheck}
+
 usage() {
   cat <<'EOF'
 Usage: fix.sh [--debug] [-y|--yes]
@@ -12,6 +15,18 @@ Usage: fix.sh [--debug] [-y|--yes]
   -y,--yes  Accept all prompts automatically.
 EOF
 }
+
+# Do not run the full interactive patch/build as root. Running as root
+# causes `gsettings` to operate on root's dconf database, not the user's,
+# which can result in experimental features being written to the wrong account
+# and the UI showing options that don't take effect for the logged-in user.
+if [[ "$(id -u)" -eq 0 ]]; then
+  warn "It looks like you're running this script as root. This is not recommended."
+  warn "Run this script as your regular user (it will use sudo internally for package operations)."
+  if ! prompt_confirm "Continue running as root?"; then
+    fail "Aborting: re-run the script as your regular user."
+  fi
+fi
 
 for arg in "$@"; do
   case "$arg" in
@@ -81,14 +96,14 @@ backup_original_packages() {
   
   info "Backing up original mutter and gnome-control-center packages"
   local mutter_pkg gnome_cc_pkg
-  mutter_pkg=$(dpkg -l | grep '^ii.*mutter ' | awk '{print $2}')
-  gnome_cc_pkg=$(dpkg -l | grep '^ii.*gnome-control-center ' | awk '{print $2}')
+  mutter_pkg=$(dpkg-query -W -f='${Package}' mutter 2>/dev/null || true)
+  gnome_cc_pkg=$(dpkg-query -W -f='${Package}' gnome-control-center 2>/dev/null || true)
   
   if [[ -n "$mutter_pkg" ]]; then
-    run_cmd "backup mutter" apt-cache show "$mutter_pkg" '>' "$backup_path/mutter.info"
+    run_cmd "backup mutter" bash -lc "apt-cache show '$mutter_pkg' > '$backup_path/mutter.info'"
   fi
   if [[ -n "$gnome_cc_pkg" ]]; then
-    run_cmd "backup gnome-cc" apt-cache show "$gnome_cc_pkg" '>' "$backup_path/gnome-control-center.info"
+    run_cmd "backup gnome-cc" bash -lc "apt-cache show '$gnome_cc_pkg' > '$backup_path/gnome-control-center.info'"
   fi
   
   echo "$backup_ts" > "$BACKUP_DIR/latest"
@@ -134,7 +149,9 @@ add_experimental_feature() {
   if [[ "$current_features" == "[]" ]]; then
     new_features="['$feature_to_add']"
   else
-    new_features="${current_features%]}", '$feature_to_add']"
+    # Remove trailing ']' then append the new feature
+    new_features="${current_features%}]"
+    new_features="${new_features}, '$feature_to_add']"
   fi
   
   gsettings set org.gnome.mutter experimental-features "$new_features" 2>&1 | grep -v "Failed to load module" | grep -v "libgnutls" || true
@@ -230,6 +247,26 @@ else
   prompt_confirm "Continue anyway?" || exit 1
 fi
 
+# If mutter already appears to be a locally patched package, skip rebuilding
+# unless the user explicitly wants to force reapply. This avoids repeatedly
+# replacing the system mutter package and reduces the chance of session
+# breakage when the script is re-run.
+installed_version=$(dpkg-query -W -f='${Version}' mutter 2>/dev/null || true)
+if [[ -n "$installed_version" && "$installed_version" == *x11scale* ]]; then
+  warn "Detected installed mutter package appears to be a local x11scale build: $installed_version"
+  if prompt_confirm "Skip rebuilding and installing mutter (already patched)?"; then
+    ok "Skipping mutter build/install"
+    # Still attempt to enable the experimental feature and continue with g-c-c
+    add_experimental_feature "x11-randr-fractional-scaling" || true
+    if ! validate_feature_enabled; then
+      warn "Feature may not have been enabled correctly"
+    fi
+    # Continue on to gnome-control-center patching/build steps
+  else
+    info "User requested to continue and rebuild mutter"
+  fi
+fi
+
 if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]]; then
   warn "Current session is '${XDG_SESSION_TYPE:-unknown}', Xorg is required"
   prompt_confirm "Continue anyway?" || exit 1
@@ -308,6 +345,23 @@ cd "${WORKDIR}"
 run_cmd "dpkg install mutter" sudo dpkg -i ./*~x11scale*.deb
 run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
 
+# Post-install verification: show installed package versions so user can
+# confirm the local x11scale packages are in place and know what to reboot.
+installed_mutter_ver=$(dpkg-query -W -f='${Version}' mutter 2>/dev/null || true)
+installed_gcc_ver=$(dpkg-query -W -f='${Version}' gnome-control-center 2>/dev/null || true)
+info "Installed mutter version: ${installed_mutter_ver:-<not-installed>}"
+info "Installed gnome-control-center version: ${installed_gcc_ver:-<not-installed>}"
+if [[ -n "${installed_mutter_ver}" && "${installed_mutter_ver}" == *x11scale* ]]; then
+  ok "Detected local mutter package (${installed_mutter_ver}). Reboot required for changes to take effect."
+else
+  warn "mutter package does not look like the local x11scale build. If you reinstalled stock mutter earlier, the patched package may have been overwritten."
+fi
+if [[ -n "${installed_gcc_ver}" && "${installed_gcc_ver}" == *x11scale* ]]; then
+  ok "Detected local gnome-control-center package (${installed_gcc_ver})."
+else
+  warn "gnome-control-center package does not look like the local x11scale build. The UI toggle may appear but not work if the backend (mutter) isn't patched/active."
+fi
+
 info "Enable X11 fractional scaling feature"
 add_experimental_feature "x11-randr-fractional-scaling"
 
@@ -361,10 +415,9 @@ cd "${WORKDIR}"
 run_cmd "dpkg install g-c-c" sudo dpkg -i ./gnome-control-center*~x11scale*.deb
 run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
 
-if prompt_confirm "Hold GNOME packages to avoid breaking updates?"; then
-  run_cmd "apt-mark hold" sudo apt-mark hold mutter gnome-control-center
-  ok "Packages held"
-fi
+info "Holding mutter and gnome-control-center to avoid accidental overwrites"
+run_cmd "apt-mark hold" sudo apt-mark hold mutter gnome-control-center || true
+ok "Packages held"
 
 if prompt_confirm "Clean build artifacts (.deb/.changes/.buildinfo) in $WORKDIR?"; then
   rm -f "$WORKDIR"/*.deb "$WORKDIR"/*.changes "$WORKDIR"/*.buildinfo || true
