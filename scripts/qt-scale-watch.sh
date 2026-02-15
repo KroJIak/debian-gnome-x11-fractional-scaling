@@ -24,22 +24,20 @@ done
 
 mkdir -p "$ENV_DIR"
 qt_font_dpi=$(awk -v s="$max_scale" 'BEGIN{printf "%d", (s * 96) + 0.5}')
-qt_scale_factor=$(awk -v s="$max_scale" 'BEGIN{printf "%.2f", s}')
+# Ensure decimal separator is a dot regardless of locale
+qt_scale_factor=$(LC_NUMERIC=C awk -v s="$max_scale" 'BEGIN{printf "%.2f", s}')
 
-content="QT_FONT_DPI=$qt_font_dpi\nQT_SCALE_FACTOR=$qt_scale_factor"
-
-# Exclude certain applications from QT_SCALE_FACTOR
-# (temporarily disabled) Previously we excluded apps like "flameshot" because
-# pinned screenshots were scaled; the Flameshot pin-scaling patch now fixes this.
-# If you need to re-enable exclusion, restore the block below and add apps.
-# excluded_apps=("flameshot")
-# for app in "${excluded_apps[@]}"; do
-#     if pgrep -x "$app" > /dev/null; then
-#         echo "Skipping QT_SCALE_FACTOR for $app"
-#         content="QT_FONT_DPI=$qt_font_dpi"
-#         break
-#     fi
-# done
+# Exclude certain applications from QT_SCALE_FACTOR.
+# By default `flameshot` is excluded to avoid pin-screenshot scaling issues.
+excluded_apps=("flameshot")
+for app in "${excluded_apps[@]}"; do
+  if pgrep -x "$app" > /dev/null; then
+    echo "Skipping QT_SCALE_FACTOR for $app"
+    # Only set QT_FONT_DPI for excluded apps so their UI fonts remain correct
+    content="QT_FONT_DPI=$qt_font_dpi"
+    break
+  fi
+done
 
 existing=""
 if [[ -f "$ENV_FILE" ]]; then
@@ -66,8 +64,12 @@ EOF
   fi
 fi
 
-if [[ "$existing" != "$content" ]]; then
-  printf '%s\n' "$content" > "$ENV_FILE"
+if [[ "$existing" != "QT_FONT_DPI=$qt_font_dpi\nQT_SCALE_FACTOR=$qt_scale_factor" ]]; then
+  # Write two separate lines to qt.conf using a here-doc to avoid locale/newline issues
+  cat > "$ENV_FILE" <<EOF
+QT_FONT_DPI=$qt_font_dpi
+QT_SCALE_FACTOR=$qt_scale_factor
+EOF
   if [[ -n "$NOTIFY_BIN" ]]; then
     "$NOTIFY_BIN" "Qt scale updated" "QT_FONT_DPI=$qt_font_dpi. Restart Qt apps or log out/in." || true
   fi
