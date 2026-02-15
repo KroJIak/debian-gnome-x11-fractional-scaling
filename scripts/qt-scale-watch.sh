@@ -24,11 +24,46 @@ done
 
 mkdir -p "$ENV_DIR"
 qt_font_dpi=$(awk -v s="$max_scale" 'BEGIN{printf "%d", (s * 96) + 0.5}')
-content="QT_FONT_DPI=$qt_font_dpi"
+qt_scale_factor=$(awk -v s="$max_scale" 'BEGIN{printf "%.2f", s}')
+
+content="QT_FONT_DPI=$qt_font_dpi\nQT_SCALE_FACTOR=$qt_scale_factor"
+
+# Exclude certain applications from QT_SCALE_FACTOR
+# (temporarily disabled) Previously we excluded apps like "flameshot" because
+# pinned screenshots were scaled; the Flameshot pin-scaling patch now fixes this.
+# If you need to re-enable exclusion, restore the block below and add apps.
+# excluded_apps=("flameshot")
+# for app in "${excluded_apps[@]}"; do
+#     if pgrep -x "$app" > /dev/null; then
+#         echo "Skipping QT_SCALE_FACTOR for $app"
+#         content="QT_FONT_DPI=$qt_font_dpi"
+#         break
+#     fi
+# done
 
 existing=""
 if [[ -f "$ENV_FILE" ]]; then
   existing="$(cat "$ENV_FILE")"
+fi
+
+if [[ -t 0 ]]; then
+  # Explain what the script does
+  cat << EOF
+This script adjusts Qt application scaling based on your current display scale.
+It sets the following environment variables:
+  - QT_FONT_DPI: Adjusts font DPI for Qt applications.
+  - QT_SCALE_FACTOR: Adjusts the scaling factor for Qt applications.
+
+Certain applications (e.g., flameshot) are excluded from QT_SCALE_FACTOR adjustments.
+EOF
+
+  # Ask the user for confirmation
+  echo -n "Do you want to apply these settings? (y/N): "
+  read -r user_input
+  if [[ ! "$user_input" =~ ^[Yy]$ ]]; then
+    echo "Settings were not applied. Exiting."
+    exit 0
+  fi
 fi
 
 if [[ "$existing" != "$content" ]]; then
