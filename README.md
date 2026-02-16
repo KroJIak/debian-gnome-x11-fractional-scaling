@@ -38,7 +38,7 @@ Options:
 - `-y`, `--yes` - auto-accept prompts.
 - `--only-qt` - install only the Qt scale watcher and systemd units.
 
-The installer copies `fix-scale` and `recovery-restore` to `~/.local/bin` and, if selected, enables the user systemd path unit for Qt updates.
+The installer copies `fix-scale` and `recovery-restore` to `~/.local/bin`, prompts to run `fix-scale` (build and install patched mutter/gnome-control-center), and optionally enables the user systemd path unit for Qt updates.
 
 ### Safety Features
 
@@ -150,6 +150,10 @@ Build logs:
 ```
 ~/debian-x11-scale/logs (WORKDIR/logs)
 ```
+
+## Debian 13.3 / mutter 48.7
+
+On Debian 13.3 with mutter 48.7, the script now prefers the **Ubuntu Salsa** patch (maintained for newer mutter) over the archived puxplaying patch. If the Ubuntu patch fails to apply, the puxplaying patch is tried automatically. Ensure `dpkg-dev` is installed (pulled in via `devscripts`).
 
 ## Important Notes
 

@@ -26,21 +26,21 @@ for arg in "$@"; do
   esac
 done
 
+# tput can fail in non-TTY (e.g. Cursor/IDE terminal)
 if command -v tput >/dev/null 2>&1; then
-  COLOR_OK=$(tput setaf 2)
-  COLOR_WARN=$(tput setaf 3)
-  COLOR_ERR=$(tput setaf 1)
-  COLOR_INFO=$(tput setaf 6)
-  COLOR_DIM=$(tput setaf 7)
-  COLOR_RESET=$(tput sgr0)
-else
-  COLOR_OK=""
-  COLOR_WARN=""
-  COLOR_ERR=""
-  COLOR_INFO=""
-  COLOR_DIM=""
-  COLOR_RESET=""
+  COLOR_OK=$(tput setaf 2 2>/dev/null) || true
+  COLOR_WARN=$(tput setaf 3 2>/dev/null) || true
+  COLOR_ERR=$(tput setaf 1 2>/dev/null) || true
+  COLOR_INFO=$(tput setaf 6 2>/dev/null) || true
+  COLOR_DIM=$(tput setaf 7 2>/dev/null) || true
+  COLOR_RESET=$(tput sgr0 2>/dev/null) || true
 fi
+COLOR_OK="${COLOR_OK:-}"
+COLOR_WARN="${COLOR_WARN:-}"
+COLOR_ERR="${COLOR_ERR:-}"
+COLOR_INFO="${COLOR_INFO:-}"
+COLOR_DIM="${COLOR_DIM:-}"
+COLOR_RESET="${COLOR_RESET:-}"
 
 fail() {
   echo "${COLOR_ERR}[error]${COLOR_RESET} $*" >&2
@@ -120,6 +120,20 @@ if [[ "$ONLY_QT" -eq 0 ]]; then
   fi
   
   info "To rollback to original packages later, run: recovery-restore --list"
+
+  if prompt_confirm "Run fix-scale now to build and install patched mutter and gnome-control-center? (Takes 15-30 min, requires X11 session)"; then
+    FIX_SCALE_ARGS=()
+    [[ "$DEBUG" -eq 1 ]] && FIX_SCALE_ARGS+=(--debug)
+    [[ "$AUTO_YES" -eq 1 ]] && FIX_SCALE_ARGS+=(-y)
+    info "Running fix-scale (building mutter and gnome-control-center)..."
+    if "$BIN_DIR/fix-scale" "${FIX_SCALE_ARGS[@]}"; then
+      ok "fix-scale completed"
+    else
+      warn "fix-scale failed or was aborted; run 'fix-scale' manually when ready"
+    fi
+  else
+    info "Skipped. Run 'fix-scale' manually when ready (requires X11 session)."
+  fi
 fi
 
 if prompt_confirm "Install qt-scale-watch? This keeps Qt apps in sync with GNOME scaling changes and avoids blurry or wrong-sized Qt UI after you change scale."; then

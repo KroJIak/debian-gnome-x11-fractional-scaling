@@ -44,21 +44,21 @@ else
   APT_YES_FLAG=""
 fi
 
+# tput can fail in non-TTY (e.g. Cursor/IDE terminal); avoid script exit with set -e
 if command -v tput >/dev/null 2>&1; then
-  COLOR_OK=$(tput setaf 2)
-  COLOR_WARN=$(tput setaf 3)
-  COLOR_ERR=$(tput setaf 1)
-  COLOR_INFO=$(tput setaf 6)
-  COLOR_DIM=$(tput setaf 7)
-  COLOR_RESET=$(tput sgr0)
-else
-  COLOR_OK=""
-  COLOR_WARN=""
-  COLOR_ERR=""
-  COLOR_INFO=""
-  COLOR_DIM=""
-  COLOR_RESET=""
+  COLOR_OK=$(tput setaf 2 2>/dev/null) || true
+  COLOR_WARN=$(tput setaf 3 2>/dev/null) || true
+  COLOR_ERR=$(tput setaf 1 2>/dev/null) || true
+  COLOR_INFO=$(tput setaf 6 2>/dev/null) || true
+  COLOR_DIM=$(tput setaf 7 2>/dev/null) || true
+  COLOR_RESET=$(tput sgr0 2>/dev/null) || true
 fi
+COLOR_OK="${COLOR_OK:-}"
+COLOR_WARN="${COLOR_WARN:-}"
+COLOR_ERR="${COLOR_ERR:-}"
+COLOR_INFO="${COLOR_INFO:-}"
+COLOR_DIM="${COLOR_DIM:-}"
+COLOR_RESET="${COLOR_RESET:-}"
 
 fail() {
   echo "${COLOR_ERR}[error]${COLOR_RESET} $*" >&2
@@ -162,6 +162,10 @@ LOG_DIR="${LOG_DIR:-$WORKDIR/logs}"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/.local/share/debian-fix-backup}"
 MUTTER_PATCH_REPO="${MUTTER_PATCH_REPO:-https://github.com/puxplaying/mutter-x11-scaling.git}"
 GCC_PATCH_REPO="${GCC_PATCH_REPO:-https://github.com/puxplaying/gnome-control-center-x11-scaling.git}"
+# Ubuntu Salsa maintains patches for newer mutter; use when puxplaying (archived) fails on 48.7+
+MUTTER_PATCH_UBUNTU_URL="${MUTTER_PATCH_UBUNTU_URL:-https://salsa.debian.org/gnome-team/mutter/-/raw/ubuntu/master/debian/patches/ubuntu/x11-Add-support-for-fractional-scaling-using-Randr.patch}"
+GCC_PATCH_UI_SCALED_URL="${GCC_PATCH_UI_SCALED_URL:-https://salsa.debian.org/gnome-team/gnome-control-center/-/raw/ubuntu/master/debian/patches/ubuntu/display-Support-UI-scaled-logical-monitor-mode.patch}"
+GCC_PATCH_FRACTIONAL_URL="${GCC_PATCH_FRACTIONAL_URL:-https://salsa.debian.org/gnome-team/gnome-control-center/-/raw/ubuntu/master/debian/patches/ubuntu/display-Allow-fractional-scaling-to-be-enabled.patch}"
 
 run_cmd() {
   local label="$1"
@@ -281,7 +285,7 @@ if ! run_cmd "apt update" sudo apt update; then
   warn "apt update failed; continuing with existing package lists"
   warn "Consider disabling unsigned repos (e.g. repo.fig.io)"
 fi
-run_cmd "apt install base tools" sudo apt install $APT_YES_FLAG devscripts build-essential quilt git
+run_cmd "apt install base tools" sudo apt install $APT_YES_FLAG devscripts build-essential quilt git dpkg-dev
 
 if prompt_confirm "Create backup of original packages before patching?"; then
   backup_original_packages
@@ -301,13 +305,34 @@ fi
 
 if ! ls -d mutter-48.* >/dev/null 2>&1; then
   run_cmd "apt source mutter" apt source mutter
+  if ! ls -d mutter-48.* >/dev/null 2>&1; then
+    info "apt source did not extract; trying dpkg-source manually (files may have been downloaded)"
+    dsc=$(ls mutter_*.dsc 2>/dev/null | head -n1)
+    if [[ -n "$dsc" ]] && command -v dpkg-source >/dev/null 2>&1; then
+      run_cmd "dpkg-source extract" dpkg-source -x "$dsc"
+    fi
+  fi
 fi
 
 MUTTER_DIR=$(ls -d mutter-48.* 2>/dev/null | head -n1 || true)
 [[ -n "${MUTTER_DIR}" ]] || fail "mutter-48.* source directory not found"
 
-PATCH_FILE="${WORKDIR}/mutter-x11-scaling/x11-Add-support-for-fractional-scaling-using-Randr.patch"
-[[ -f "${PATCH_FILE}" ]] || fail "patch not found: ${PATCH_FILE}"
+# Prefer Ubuntu Salsa patch (maintained for newer mutter); fallback to puxplaying
+PATCH_FILE=""
+if command -v curl >/dev/null 2>&1; then
+  UBUNTU_PATCH="${WORKDIR}/x11-Add-support-for-fractional-scaling-using-Randr-ubuntu.patch"
+  if curl -sfL -o "$UBUNTU_PATCH" "${MUTTER_PATCH_UBUNTU_URL}" 2>/dev/null && [[ -s "$UBUNTU_PATCH" ]]; then
+    PATCH_FILE="$UBUNTU_PATCH"
+    info "Using Ubuntu Salsa patch (for mutter 48.7+)"
+  fi
+fi
+if [[ -z "${PATCH_FILE}" || ! -f "${PATCH_FILE}" ]]; then
+  PATCH_FILE="${WORKDIR}/mutter-x11-scaling/x11-Add-support-for-fractional-scaling-using-Randr.patch"
+  if [[ ! -f "${PATCH_FILE}" ]]; then
+    fail "patch not found: ${PATCH_FILE} (and Ubuntu patch download failed)"
+  fi
+  info "Using puxplaying patch"
+fi
 
 cd "${WORKDIR}/${MUTTER_DIR}"
 
@@ -320,18 +345,40 @@ fi
 
 info "Applying patch with quilt"
 export QUILT_PATCHES=debian/patches
-cp -f "${PATCH_FILE}" "${QUILT_PATCHES}/"
-if ! grep -q "x11-Add-support-for-fractional-scaling-using-Randr.patch" "${QUILT_PATCHES}/series"; then
-  echo "x11-Add-support-for-fractional-scaling-using-Randr.patch" >> "${QUILT_PATCHES}/series"
+PATCH_NAME="x11-Add-support-for-fractional-scaling-using-Randr.patch"
+cp -f "${PATCH_FILE}" "${QUILT_PATCHES}/${PATCH_NAME}"
+if ! grep -q "${PATCH_NAME}" "${QUILT_PATCHES}/series"; then
+  echo "${PATCH_NAME}" >> "${QUILT_PATCHES}/series"
 fi
 
 if ! quilt push -a; then
-  if quilt applied | grep -q "x11-Add-support-for-fractional-scaling-using-Randr.patch"; then
+  if quilt applied | grep -q "${PATCH_NAME}"; then
     warn "Patch already applied; continuing"
   else
-    warn "Patch did not apply cleanly on mutter ${MUTTER_DIR}"
-    warn "Manual porting is required; see the *.rej files if present"
-    exit 1
+    # Ubuntu patch may not match mutter 48.7; try puxplaying as fallback
+    PUXPLAYING_PATCH="${WORKDIR}/mutter-x11-scaling/x11-Add-support-for-fractional-scaling-using-Randr.patch"
+    if [[ -f "$PUXPLAYING_PATCH" && "$PATCH_FILE" != "$PUXPLAYING_PATCH" ]]; then
+      warn "Ubuntu patch did not apply; trying puxplaying patch"
+      quilt pop -a -f 2>/dev/null || true
+      sed -i "/${PATCH_NAME}/d" "${QUILT_PATCHES}/series"
+      cp -f "$PUXPLAYING_PATCH" "${QUILT_PATCHES}/${PATCH_NAME}"
+      echo "${PATCH_NAME}" >> "${QUILT_PATCHES}/series"
+      if ! quilt push -a; then
+        if quilt applied | grep -q "${PATCH_NAME}"; then
+          warn "Patch already applied; continuing"
+        else
+          warn "Both Ubuntu and puxplaying patches failed on mutter ${MUTTER_DIR}"
+          warn "Manual porting is required; see the *.rej files if present"
+          exit 1
+        fi
+      else
+        info "puxplaying patch applied successfully"
+      fi
+    else
+      warn "Patch did not apply cleanly on mutter ${MUTTER_DIR}"
+      warn "Manual porting is required; see the *.rej files if present"
+      exit 1
+    fi
   fi
 fi
 
