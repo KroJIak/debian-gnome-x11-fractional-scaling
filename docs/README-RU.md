@@ -49,13 +49,10 @@
 
 Что делает скрипт:
 
-- Устанавливает инструменты сборки и зависимости.
-- Скачивает исходники Debian через `apt source`.
-- Применяет патчи для дробного масштабирования X11.
-- Собирает и устанавливает `.deb` пакеты.
+- Ищет готовый пакет в [Releases](https://github.com/KroJIak/debian-gnome-x11-fractional-scaling/releases), подходящий под вашу систему (1–2 мин).
+- Если нет — собирает из исходников: ставит зависимости, качает исходники, применяет патчи (~30 мин).
 - Включает экспериментальную опцию GNOME `x11-randr-fractional-scaling`.
 - По желанию ставит `mutter` и `gnome-control-center` на hold.
-- Удаляет временную рабочую директорию по завершении.
 
 ## Qt-наблюдатель масштаба (опционально)
 
@@ -97,6 +94,10 @@ systemctl --user daemon-reload
 ```bash
 sudo apt-mark unhold mutter gnome-control-center
 ```
+
+## Готовые пакеты (быстрая установка)
+
+Если в [Releases](https://github.com/KroJIak/debian-gnome-x11-fractional-scaling/releases) есть готовый архив для ваших версий mutter и gnome-control-center, скрипт скачает и установит его (1–2 мин). Иначе соберёт из исходников (~30 мин).
 
 ## Логи
 

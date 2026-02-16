@@ -59,13 +59,10 @@ After installation you must re-login or reboot.
 
 What the script does:
 
-- Installs build tools and build dependencies.
-- Downloads Debian source packages with `apt source`.
-- Applies X11 fractional scaling patches.
-- Builds and installs patched `.deb` packages.
+- Tries to download a pre-built package from [Releases](https://github.com/KroJIak/debian-gnome-x11-fractional-scaling/releases) if one matches your system (1–2 min).
+- If no match, builds from source: installs build tools, downloads sources, applies patches, builds and installs (~30 min).
 - Enables the GNOME experimental feature `x11-randr-fractional-scaling`.
 - Optionally puts `mutter` and `gnome-control-center` on hold.
-- Removes the temporary work directory when finished.
 
 ## Qt scaling watcher (optional)
 
@@ -150,6 +147,10 @@ Build logs:
 ```
 ~/debian-x11-scale/logs (WORKDIR/logs)
 ```
+
+## Pre-built packages (fast install)
+
+If a pre-built tarball exists in [GitHub Releases](https://github.com/KroJIak/debian-gnome-x11-fractional-scaling/releases) matching your mutter and gnome-control-center versions, `fix-scale` will download and install it (1–2 min). Otherwise it builds from source (~30 min).
 
 ## Debian 13.3 / mutter 48.7
 

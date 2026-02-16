@@ -3,16 +3,20 @@ set -euo pipefail
 
 AUTO_YES=0
 DEBUG=0
+SAVE_DEBS=0
+FORCE_BUILD=0
 
 # Always skip running unit tests during Debian builds unless explicitly overridden
 export DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-nocheck}
 
 usage() {
   cat <<'EOF'
-Usage: fix.sh [--debug] [-y|--yes]
+Usage: fix-scale.sh [--debug] [-y|--yes] [--save-debs] [--force-build]
 
-  --debug   Show full command output.
-  -y,--yes  Accept all prompts automatically.
+  --debug        Show full command output.
+  -y,--yes       Accept all prompts automatically.
+  --save-debs    Save built .deb files to tarball without installing (maintainer use).
+  --force-build  Skip prebuilt check and always build from source.
 EOF
 }
 
@@ -32,6 +36,8 @@ for arg in "$@"; do
   case "$arg" in
     --debug) DEBUG=1 ;;
     -y|--yes) AUTO_YES=1 ;;
+    --save-debs) SAVE_DEBS=1 ;;
+    --force-build) FORCE_BUILD=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $arg" >&2; usage; exit 1 ;;
   esac
@@ -132,6 +138,61 @@ validate_feature_enabled() {
   return 0
 }
 
+# Sanitize version for URL/filename: 48.7-0+deb13u1 -> 48.7-0-deb13u1, 1:48.4-1~deb13u1 -> 1-48.4-1-deb13u1
+sanitize_version() {
+  echo "$1" | sed 's/+/-/g; s/~/-/g; s/:/-/g'
+}
+
+# Check GitHub releases for pre-built tarball, download and install if found
+try_prebuilt_install() {
+  [[ -n "${PREBUILT_RELEASES_BASE:-}" ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+
+  local mutter_ver gcc_ver arch m_sanitized g_sanitized asset_name url tmpdir
+  mutter_ver=$(apt-cache policy mutter 2>/dev/null | grep -oP 'Candidate: \K\S+' | head -1)
+  gcc_ver=$(apt-cache policy gnome-control-center 2>/dev/null | grep -oP 'Candidate: \K\S+' | head -1)
+  arch=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
+
+  [[ -n "$mutter_ver" && -n "$gcc_ver" ]] || return 1
+  m_sanitized=$(sanitize_version "$mutter_ver")
+  g_sanitized=$(sanitize_version "$gcc_ver")
+  asset_name="x11-scale-mutter-${m_sanitized}-gcc-${g_sanitized}-${arch}.tar.xz"
+  url="${PREBUILT_RELEASES_BASE}/${asset_name}"
+
+  info "Checking for pre-built package: $asset_name"
+  if [[ "$(curl -sfI -L -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)" != "200" ]]; then
+    return 1
+  fi
+
+  ok "Pre-built package found"
+  tmpdir=$(mktemp -d)
+  info "Downloading $asset_name ..."
+  if ! curl -sfL -o "$tmpdir/pkg.tar.xz" "$url"; then
+    warn "Download failed"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  info "Extracting and installing..."
+  (cd "$tmpdir" && tar -xJf pkg.tar.xz) || { warn "Extract failed"; rm -rf "$tmpdir"; return 1; }
+  local deb_count
+  deb_count=$(find "$tmpdir" -name '*.deb' 2>/dev/null | wc -l)
+  if [[ "$deb_count" -eq 0 ]]; then
+    warn "No .deb files in tarball"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  if ! run_cmd "dpkg install prebuilt" sudo find "$tmpdir" -name '*.deb' -exec dpkg -i {} +; then
+    warn "Install failed; you may need to run: sudo apt --fix-broken install"
+  fi
+  run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
+  add_experimental_feature "x11-randr-fractional-scaling"
+  run_cmd "apt-mark hold" sudo apt-mark hold mutter gnome-control-center || true
+  rm -rf "$tmpdir"
+  ok "Pre-built packages installed"
+  return 0
+}
+
 add_experimental_feature() {
   local feature_to_add="$1"
   local current_features
@@ -164,6 +225,8 @@ MUTTER_PATCH_REPO="${MUTTER_PATCH_REPO:-https://github.com/puxplaying/mutter-x11
 GCC_PATCH_REPO="${GCC_PATCH_REPO:-https://github.com/puxplaying/gnome-control-center-x11-scaling.git}"
 # Ubuntu Salsa maintains patches for newer mutter; use when puxplaying (archived) fails on 48.7+
 MUTTER_PATCH_UBUNTU_URL="${MUTTER_PATCH_UBUNTU_URL:-https://salsa.debian.org/gnome-team/mutter/-/raw/ubuntu/master/debian/patches/ubuntu/x11-Add-support-for-fractional-scaling-using-Randr.patch}"
+# GitHub releases base for pre-built .deb (set empty to disable)
+PREBUILT_RELEASES_BASE="${PREBUILT_RELEASES_BASE:-https://github.com/KroJIak/debian-gnome-x11-fractional-scaling/releases/latest/download}"
 GCC_PATCH_UI_SCALED_URL="${GCC_PATCH_UI_SCALED_URL:-https://salsa.debian.org/gnome-team/gnome-control-center/-/raw/ubuntu/master/debian/patches/ubuntu/display-Support-UI-scaled-logical-monitor-mode.patch}"
 GCC_PATCH_FRACTIONAL_URL="${GCC_PATCH_FRACTIONAL_URL:-https://salsa.debian.org/gnome-team/gnome-control-center/-/raw/ubuntu/master/debian/patches/ubuntu/display-Allow-fractional-scaling-to-be-enabled.patch}"
 
@@ -276,8 +339,23 @@ if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]]; then
   prompt_confirm "Continue anyway?" || exit 1
 fi
 
+# Try pre-built packages from GitHub releases (skip if already patched, --force-build, or --save-debs)
+if [[ "$FORCE_BUILD" -eq 0 && "$SAVE_DEBS" -eq 0 ]]; then
+  if [[ -z "$installed_version" || "$installed_version" != *x11scale* ]]; then
+    if try_prebuilt_install; then
+      warn "Please re-login or reboot for changes to take effect"
+      exit 0
+    fi
+    info "No matching pre-built package found; building from source..."
+  fi
+fi
+
 if ! command -v quilt >/dev/null 2>&1; then
-  fail "quilt is required but not installed; install with: sudo apt install quilt"
+  info "quilt not found; installing build tools (quilt, dpkg-dev, devscripts...)..."
+  if ! run_cmd "apt update" sudo apt update; then
+    warn "apt update failed; continuing with existing package lists"
+  fi
+  run_cmd "apt install build tools" sudo apt install $APT_YES_FLAG devscripts build-essential quilt git dpkg-dev
 fi
 
 info "Installing build tools"
@@ -387,13 +465,15 @@ validate_patch_applied "${WORKDIR}/${MUTTER_DIR}"
 info "Building mutter package"
 run_cmd "build mutter" env DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-nocheck} dpkg-buildpackage -b -us -uc
 
-info "Installing mutter packages"
 cd "${WORKDIR}"
-run_cmd "dpkg install mutter" sudo dpkg -i ./*~x11scale*.deb
-run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
+if [[ "$SAVE_DEBS" -eq 0 ]]; then
+  info "Installing mutter packages"
+  run_cmd "dpkg install mutter" sudo dpkg -i ./*~x11scale*.deb
+  run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
+fi
 
-# Post-install verification: show installed package versions so user can
-# confirm the local x11scale packages are in place and know what to reboot.
+# Post-install verification (skip when --save-debs)
+if [[ "$SAVE_DEBS" -eq 0 ]]; then
 installed_mutter_ver=$(dpkg-query -W -f='${Version}' mutter 2>/dev/null || true)
 installed_gcc_ver=$(dpkg-query -W -f='${Version}' gnome-control-center 2>/dev/null || true)
 info "Installed mutter version: ${installed_mutter_ver:-<not-installed>}"
@@ -409,11 +489,11 @@ else
   warn "gnome-control-center package does not look like the local x11scale build. The UI toggle may appear but not work if the backend (mutter) isn't patched/active."
 fi
 
-info "Enable X11 fractional scaling feature"
-add_experimental_feature "x11-randr-fractional-scaling"
-
-if ! validate_feature_enabled; then
-  warn "Feature may not have been enabled correctly"
+  info "Enable X11 fractional scaling feature"
+  add_experimental_feature "x11-randr-fractional-scaling"
+  if ! validate_feature_enabled; then
+    warn "Feature may not have been enabled correctly"
+  fi
 fi
 
 info "Installing build dependencies for gnome-control-center"
@@ -457,14 +537,36 @@ patch_if_needed \
 info "Building gnome-control-center packages"
 run_cmd "build g-c-c" env DEB_BUILD_OPTIONS=${DEB_BUILD_OPTIONS:-nocheck} dpkg-buildpackage -b -us -uc
 
-info "Installing gnome-control-center packages"
 cd "${WORKDIR}"
-run_cmd "dpkg install g-c-c" sudo dpkg -i ./gnome-control-center*~x11scale*.deb
-run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
+if [[ "$SAVE_DEBS" -eq 0 ]]; then
+  info "Installing gnome-control-center packages"
+  run_cmd "dpkg install g-c-c" sudo dpkg -i ./gnome-control-center*~x11scale*.deb
+  run_cmd "glib-compile-schemas" sudo glib-compile-schemas /usr/share/glib-2.0/schemas
+  info "Holding mutter and gnome-control-center to avoid accidental overwrites"
+  run_cmd "apt-mark hold" sudo apt-mark hold mutter gnome-control-center || true
+  ok "Packages held"
+fi
 
-info "Holding mutter and gnome-control-center to avoid accidental overwrites"
-run_cmd "apt-mark hold" sudo apt-mark hold mutter gnome-control-center || true
-ok "Packages held"
+if [[ "$SAVE_DEBS" -eq 1 ]]; then
+  info "Creating tarball..."
+  mutter_deb=$(ls ./*~x11scale*.deb 2>/dev/null | head -1)
+  gcc_deb=$(ls ./gnome-control-center*~x11scale*.deb 2>/dev/null | head -1)
+  if [[ -z "$mutter_deb" || -z "$gcc_deb" ]]; then
+    fail "Could not find built .deb files"
+  fi
+  m_ver=$(dpkg-deb -f "$mutter_deb" Version 2>/dev/null | sed 's/~x11scale.*//')
+  g_ver=$(dpkg-deb -f "$gcc_deb" Version 2>/dev/null | sed 's/~x11scale.*//')
+  [[ -z "$m_ver" ]] && m_ver=$(echo "$mutter_deb" | sed -n 's/.*_\([0-9].*\)_amd64\.deb/\1/p' | sed 's/~x11scale.*//')
+  [[ -z "$g_ver" ]] && g_ver=$(echo "$gcc_deb" | sed -n 's/.*_\([0-9].*\)_amd64\.deb/\1/p' | sed 's/~x11scale.*//')
+  m_sanitized=$(sanitize_version "${m_ver}")
+  g_sanitized=$(sanitize_version "${g_ver}")
+  arch=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
+  tarball_name="x11-scale-mutter-${m_sanitized}-gcc-${g_sanitized}-${arch}.tar.xz"
+  tarball_path="$HOME/${tarball_name}"
+  tar -cJf "$tarball_path" ./*~x11scale*.deb ./gnome-control-center*~x11scale*.deb 2>/dev/null
+  ok "Created: $tarball_path"
+  exit 0
+fi
 
 if prompt_confirm "Clean build artifacts (.deb/.changes/.buildinfo) in $WORKDIR?"; then
   rm -f "$WORKDIR"/*.deb "$WORKDIR"/*.changes "$WORKDIR"/*.buildinfo || true
