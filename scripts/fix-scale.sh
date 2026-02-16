@@ -211,7 +211,7 @@ add_experimental_feature() {
     new_features="['$feature_to_add']"
   else
     # Remove trailing ']' then append the new feature
-    new_features="${current_features%}]"
+    new_features="${current_features%']'}"
     new_features="${new_features}, '$feature_to_add']"
   fi
   
@@ -340,13 +340,22 @@ if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]]; then
 fi
 
 # Try pre-built packages from GitHub releases (skip if already patched, --force-build, or --save-debs)
+PREBUILT_FAILED=0
 if [[ "$FORCE_BUILD" -eq 0 && "$SAVE_DEBS" -eq 0 ]]; then
   if [[ -z "$installed_version" || "$installed_version" != *x11scale* ]]; then
     if try_prebuilt_install; then
       warn "Please re-login or reboot for changes to take effect"
       exit 0
     fi
-    info "No matching pre-built package found; building from source..."
+    PREBUILT_FAILED=1
+  fi
+fi
+
+if [[ "$PREBUILT_FAILED" -eq 1 ]]; then
+  info "No pre-built package found in Releases for your mutter/gnome-control-center versions."
+  if ! prompt_confirm "Build from source? (Takes 15-30 min)"; then
+    info "Skipped. Run fix-scale when ready to build."
+    exit 0
   fi
 fi
 

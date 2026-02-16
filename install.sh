@@ -121,11 +121,11 @@ if [[ "$ONLY_QT" -eq 0 ]]; then
   
   info "To rollback to original packages later, run: recovery-restore --list"
 
-  if prompt_confirm "Run fix-scale now to build and install patched mutter and gnome-control-center? (Takes 15-30 min, requires X11 session)"; then
+  if prompt_confirm "Run fix-scale now? (Tries pre-built from Releases first; if none found, builds from source ~30 min. Requires X11 session)"; then
     FIX_SCALE_ARGS=()
     [[ "$DEBUG" -eq 1 ]] && FIX_SCALE_ARGS+=(--debug)
     [[ "$AUTO_YES" -eq 1 ]] && FIX_SCALE_ARGS+=(-y)
-    info "Running fix-scale (building mutter and gnome-control-center)..."
+    info "Running fix-scale..."
     if "$BIN_DIR/fix-scale" "${FIX_SCALE_ARGS[@]}"; then
       ok "fix-scale completed"
     else
